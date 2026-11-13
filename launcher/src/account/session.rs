@@ -17,6 +17,7 @@ pub enum Phase {
     Ownership,
     Profile,
     Saving,
+    Elyby,
     SigningOut,
 }
 
@@ -31,6 +32,7 @@ impl Phase {
             Self::Ownership => "Checking Minecraft ownership…",
             Self::Profile => "Loading Minecraft profile…",
             Self::Saving => "Saving sign-in…",
+            Self::Elyby => "Signing in to Ely.by…",
             Self::SigningOut => "Signing out…",
         }
     }

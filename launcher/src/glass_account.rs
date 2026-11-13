@@ -182,6 +182,7 @@ impl Launcher {
                     .child(note),
             )
             .children(button)
+            .child(self.elyby_section(cx))
             .when(configured, |d| {
                 d.child(
                     ui::text(12., FontWeight::NORMAL, 0.45)

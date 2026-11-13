@@ -116,6 +116,10 @@ enum AccountCmd {
         #[arg(long = "for")]
         target: Option<String>,
     },
+    /// Sign in with an Ely.by account (username or email). The password is read from the
+    /// HORIZON_ELYBY_PASSWORD variable, else from a line on stdin; with two-factor sign-in, add
+    /// the code as `password:code`
+    SignInElyby { username: String },
     /// Renew an account's session now, even when its access token is still fresh
     Refresh { who: String },
     /// Renew an account's session for a game already running: prints the read-once session file
@@ -2006,6 +2010,31 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
             println!("Signed in as {}.", signed_in.name);
             if let Some(said) = account::no_keychain() {
                 eprintln!("{said}");
+            }
+        }
+        AccountCmd::SignInElyby { username } => {
+            let password = match std::env::var("HORIZON_ELYBY_PASSWORD") {
+                Ok(p) if !p.is_empty() => p,
+                _ => {
+                    eprint!("Ely.by password for {username}: ");
+                    let mut line = String::new();
+                    std::io::stdin()
+                        .read_line(&mut line)
+                        .map_err(|e| e.to_string())?;
+                    line.trim_end_matches(['\r', '\n']).to_string()
+                }
+            };
+            let sign_in = account::SignIn::start_elyby(username, password);
+            let signed_in = loop {
+                if let account::SignInState::Done(result) = sign_in.state() {
+                    break result?;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            };
+            if as_json {
+                json(serde_json::json!({ "signed_in": signed_in.uuid }));
+            } else {
+                println!("Signed in as {}.", signed_in.name);
             }
         }
         AccountCmd::SignOut { who } => {

@@ -11,6 +11,8 @@ use std::{
 
 /// MinecraftServicesEnvironment.PROD.
 pub const DEFAULT_DISCOVERY: &str = "https://discovery.minecraftservices.com/minecraft/client";
+/// Ely.by's session server join (Yggdrasil), for sessions the launcher signed in with Ely.by.
+const ELYBY_JOIN: &str = "https://authserver.ely.by/session/join";
 /// A session file older than this is refused: it can't be replayed later.
 const MAX_SESSION_FILE_AGE: Duration = Duration::from_secs(120);
 
@@ -19,6 +21,8 @@ pub struct AuthSession {
     pub name: String,
     pub uuid: u128,
     pub xuid: Option<String>,
+    /// An Ely.by account: server joins go to Ely.by's session server, not Mojang's.
+    pub elyby: bool,
     access_token: String,
 }
 impl std::fmt::Debug for AuthSession {
@@ -46,6 +50,7 @@ impl AuthSession {
             name: name.to_owned(),
             uuid,
             xuid: None,
+            elyby: false,
             access_token: access_token.to_owned(),
         }
     }
@@ -53,7 +58,7 @@ impl AuthSession {
     pub fn access_token(&self) -> &str {
         &self.access_token
     }
-    /// The session file's JSON: {"name", "uuid", "access_token", "user_type": "msa", "xuid"}.
+    /// The session file's JSON: {"name", "uuid", "access_token", "user_type": "msa" or "elyby", "xuid"}.
     pub fn parse(text: &str) -> Result<Self, String> {
         let v: serde_json::Value =
             serde_json::from_str(text).map_err(|_| "the session is not valid JSON")?;
@@ -68,13 +73,14 @@ impl AuthSession {
         let access_token = field("access_token")
             .filter(|t| !t.is_empty())
             .ok_or("the session has no access token")?;
-        if field("user_type").is_some_and(|t| t != "msa") {
-            return Err("the session is not a Microsoft account session".into());
+        if field("user_type").is_some_and(|t| t != "msa" && t != "elyby") {
+            return Err("the session is not a Microsoft or Ely.by account session".into());
         }
         Ok(Self {
             name: name.to_owned(),
             uuid,
             xuid: field("xuid").map(str::to_owned),
+            elyby: field("user_type") == Some("elyby"),
             access_token: access_token.to_owned(),
         })
     }
@@ -306,8 +312,11 @@ pub fn join_server(session: &AuthSession, server_hash: &str) -> Result<(), JoinE
 }
 
 fn join_server_once(session: &AuthSession, server_hash: &str) -> Result<(), JoinError> {
-    let doc = discovery()?;
-    let url = endpoint(&doc, "session", "join").ok_or(JoinError::Unavailable)?;
+    let url = if session.elyby {
+        ELYBY_JOIN.to_owned()
+    } else {
+        endpoint(&discovery()?, "session", "join").ok_or(JoinError::Unavailable)?
+    };
     match agent()
         .post(&url)
         .set("Content-Type", "application/json; charset=utf-8")

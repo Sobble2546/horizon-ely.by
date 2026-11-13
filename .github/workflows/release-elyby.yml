@@ -1,0 +1,112 @@
+name: release-elyby
+# Builds this fork's launcher (with Ely.by sign-in) for Linux, macOS (Apple Silicon) and Windows
+# x64 and publishes the archives as a GitHub release of this repository.
+#   git tag v0.2.0-elyby.1 && git push origin v0.2.0-elyby.1     # release from a tag
+#   gh workflow run release-elyby -f tag=v0.2.0-elyby.1           # or by hand, on the chosen ref
+# The release is made from the tag's commit; run by hand, the tag is created on the run's commit.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create or update (for example v0.2.0-elyby.1)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-elyby-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            binary: horizon-launcher
+          - name: macos-arm64
+            os: macos-14
+            binary: horizon-launcher
+          - name: windows-x64
+            os: windows-latest
+            binary: horizon-launcher.exe
+            # The C runtime linked in: no Visual C++ redistributable needed.
+            rustflags: -C target-feature=+crt-static
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      HORIZON_LAUNCHER_VERSION: ${{ inputs.tag || github.ref_name }}
+    defaults:
+      run:
+        working-directory: launcher
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-11
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: launcher
+          shared-key: release-elyby-${{ matrix.name }}
+      - name: Linux libraries GPUI links to
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev libvulkan-dev libasound2-dev patchelf
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            7z a "../dist/horizon-launcher-${{ matrix.name }}.zip" "./target/release/${{ matrix.binary }}"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            (cd target/release && zip "$GITHUB_WORKSPACE/dist/horizon-launcher-${{ matrix.name }}.zip" "${{ matrix.binary }}")
+          else
+            tar -C target/release -czf "../dist/horizon-launcher-${{ matrix.name }}.tar.gz" "${{ matrix.binary }}"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: launcher-*
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          fi

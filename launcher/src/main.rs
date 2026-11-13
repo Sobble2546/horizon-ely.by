@@ -41,6 +41,7 @@ mod instances_page;
 mod internet;
 mod language_page;
 mod launch_page;
+mod elyby_page;
 mod line_edit;
 mod location_page;
 mod markdown;
@@ -389,6 +390,13 @@ struct Launcher {
     friend_code: line_edit::LineEdit,
     friend_focused: bool,
     friend_focus: FocusHandle,
+    elyby_open: bool,
+    elyby_user: line_edit::LineEdit,
+    elyby_pass: line_edit::LineEdit,
+    elyby_user_focused: bool,
+    elyby_pass_focused: bool,
+    elyby_user_focus: FocusHandle,
+    elyby_pass_focus: FocusHandle,
     /// The window's width at the last frame: Home's head lays out by it, as the mockup's `xl`.
     window_width: f32,
     /// The window's longer side in points, and the screen's pixels per point: the size pictures
@@ -695,6 +703,13 @@ impl Launcher {
             window_long_side: 0.,
             scale_factor: 1.,
             friend_focus: cx.focus_handle(),
+            elyby_open: false,
+            elyby_user: line_edit::LineEdit::new(String::new(), 256, 32),
+            elyby_pass: line_edit::LineEdit::new(String::new(), 256, 32),
+            elyby_user_focused: false,
+            elyby_pass_focused: false,
+            elyby_user_focus: cx.focus_handle(),
+            elyby_pass_focus: cx.focus_handle(),
             joining: None,
             quick_play: None,
             client_run: None,
@@ -4400,6 +4415,7 @@ impl Launcher {
         let (mut rows, mut n) = self.microsoft_rows(cx);
         n += 1;
         let (title, detail, action) = self.sign_in_parts(cx);
+        let detail = div().child(detail).child(self.elyby_section(cx));
         rows = rows.child(index_row(
             n,
             title,
@@ -5279,6 +5295,8 @@ impl Render for Launcher {
         self.mods.note_focus(window);
         self.github.note_focus(window);
         self.args_focused = self.args_focus.is_focused(window);
+        self.elyby_user_focused = self.elyby_user_focus.is_focused(window);
+        self.elyby_pass_focused = self.elyby_pass_focus.is_focused(window);
         self.proxy_focused = self.proxy_focus.is_focused(window);
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);

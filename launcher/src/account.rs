@@ -12,6 +12,7 @@
 //!
 //! The Azure app (client ID) is Horizon's own and is configuration: `HORIZON_MSA_CLIENT_ID` at
 //! build time, or at run time to override it. Without one, sign-in says it is not configured.
+mod elyby;
 pub mod session;
 
 use serde_json::{json, Value};
@@ -535,6 +536,10 @@ pub struct Secrets {
     /// existed passed the same check at sign-in, which refuses everyone else.
     #[serde(default = "owned_at_sign_in")]
     owns: bool,
+    /// An Ely.by account (`elyby.rs`): `refresh_token` is its client token and `minecraft_token`
+    /// its access token. It plays without owning Minecraft through Mojang.
+    #[serde(default)]
+    elyby: bool,
 }
 fn owned_at_sign_in() -> bool {
     true
@@ -574,6 +579,7 @@ impl Secrets {
             minecraft_expires_at: mc.expires_at,
             xuid: mc.xuid,
             owns: true,
+            elyby: false,
         }
     }
 }
@@ -602,6 +608,9 @@ fn check_with(
     force: bool,
     progress: &dyn Fn(session::Phase),
 ) -> Check {
+    if secrets.elyby {
+        return elyby::check(account, secrets);
+    }
     if secrets.sign_in_required {
         return Check::NoAnswer(SIGN_IN_AGAIN.into(), secrets);
     }
@@ -2124,7 +2133,7 @@ pub fn write_session_file(
         "name": account.name,
         "uuid": account.uuid,
         "access_token": secrets.minecraft_token,
-        "user_type": "msa",
+        "user_type": if secrets.elyby { "elyby" } else { "msa" },
         "xuid": secrets.xuid,
     });
     std::io::Write::write_all(&mut file, body.to_string().as_bytes()).map_err(|e| e.to_string())?;
@@ -2292,6 +2301,22 @@ impl SignIn {
                 Ok(account)
             })();
             set(SignInState::Done(result));
+        });
+        Self { state, cancel }
+    }
+    /// Sign in with an Ely.by account: its username or email and password (a two-factor code
+    /// goes after the password as `password:code`). Never asks the browser or Microsoft.
+    pub fn start_elyby(username: String, password: String) -> Self {
+        let state = std::sync::Arc::new(Mutex::new(SignInState::Working(session::Phase::Elyby)));
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread_state = state.clone();
+        std::thread::spawn(move || {
+            let set = |s| *thread_state.lock().unwrap() = s;
+            set(SignInState::Done(elyby::sign_in_and_keep(
+                &username,
+                &password,
+                &|phase| set(SignInState::Working(phase)),
+            )));
         });
         Self { state, cancel }
     }
