@@ -11,6 +11,9 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 pub const REPO: &str = "horizon-rust/horizon";
+/// Where this fork's launcher releases are published and updated from (`.github/workflows/release-elyby.yml`).
+/// The game's releases still come from [`REPO`].
+pub const LAUNCHER_REPO: &str = "Sobble2546/horizon-ely.by";
 pub const README_URL: &str = "https://github.com/horizon-rust/horizon/blob/main/launcher/README.md";
 /// The players' page on connecting an AI agent (the website's docs/agents.md).
 pub const AGENT_DOCS_URL: &str = "https://playhorizon.dev/docs/agents";
@@ -780,8 +783,13 @@ fn game_releases_with(
 /// a day, so the newest launcher release can be older than all of those: then the newest
 /// `launcher@` and `launcher-v` tags are looked up one by one (a draft's tag is skipped: it has no
 /// public release).
-fn launcher_releases_in(list: &serde_json::Value) -> Vec<Release> {
-    launcher_releases_in_with(list, |url| crate::github::json(&url))
+fn launcher_releases_in(_game_list: &serde_json::Value) -> Vec<Release> {
+    // The launcher is the fork's own: its releases are in the fork's repository, not the game's.
+    let list = crate::github::json(&format!(
+        "https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"
+    ))
+    .unwrap_or_default();
+    launcher_releases_in_with(&list, |url| crate::github::json(&url))
 }
 
 fn launcher_releases_in_with(
@@ -792,7 +800,7 @@ fn launcher_releases_in_with(
     if found.iter().any(|r| r.asset.is_some()) {
         return found;
     }
-    let api = format!("https://api.github.com/repos/{REPO}");
+    let api = format!("https://api.github.com/repos/{LAUNCHER_REPO}");
     let mut tags = Vec::new();
     for prefix in [LAUNCHER_TAG_PREFIX, OLD_LAUNCHER_TAG_PREFIX] {
         // Every `launcher@` tag is newer than every `launcher-v` one: those only when there is none.
@@ -1105,7 +1113,17 @@ pub(crate) fn fetch_small(url: &str) -> Result<Option<Vec<u8>>, String> {
 
 /// The SHA-256 the release's signed checksums give for `asset`, or why it must not be installed.
 fn signed_digest(tag: &str, asset: &str) -> Result<String, String> {
-    crate::signed::digest(
+    signed_digest_in(REPO, tag, asset)
+}
+
+/// [`signed_digest`] for a launcher release, which is in [`LAUNCHER_REPO`].
+fn launcher_digest(tag: &str, asset: &str) -> Result<String, String> {
+    signed_digest_in(LAUNCHER_REPO, tag, asset)
+}
+
+fn signed_digest_in(repo: &str, tag: &str, asset: &str) -> Result<String, String> {
+    crate::signed::digest_in(
+        repo,
         tag,
         asset,
         &horizon_release_sign::trusted_keys(),
@@ -3959,7 +3977,7 @@ pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<
     {
         return Ok(None);
     }
-    let sha256 = signed_digest(&release.tag, launcher_asset().unwrap_or_default())?;
+    let sha256 = launcher_digest(&release.tag, launcher_asset().unwrap_or_default())?;
     let work = update_work_dir();
     remove_abandoned_stages(&work, std::time::SystemTime::now(), process_alive);
     let stage = new_stage_folder(&work)?;
